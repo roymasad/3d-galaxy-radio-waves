@@ -154,6 +154,15 @@ class RadioWaveRenderer:
         self.static_instance_count = 0
         self.earth_index = -1
         self.static_data_initialized = False
+
+        # Add post-processing resources
+        self.main_fbo = None
+        self.bright_fbo = None
+        self.blur_fbos = None
+        self.screen_quad_vao = None
+        self.post_shader = None
+        self.blur_shader = None
+        self.bright_shader = None
     
     def _create_star_shader(self):
         """Create shader program for rendering stars."""
@@ -409,8 +418,75 @@ class RadioWaveRenderer:
         # Load the star texture
         self.star_texture_id = self._load_star_texture()
         
+        # Initialize post-processing resources
+        self._create_framebuffers()
+        self._create_post_shaders()
+        self._create_screen_quad()
+        
         self.initialized = True
-    
+
+    def _create_framebuffers(self):
+        """Create framebuffers for post-processing."""
+        # Main scene FBO
+        self.main_fbo = glGenFramebuffers(1)
+        self.main_color_texture = glGenTextures(1)  # Changed name for clarity
+        main_depth_buffer = glGenRenderbuffers(1)
+        
+        glBindFramebuffer(GL_FRAMEBUFFER, self.main_fbo)
+        
+        # Color attachment
+        glBindTexture(GL_TEXTURE_2D, self.main_color_texture)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, self.width, self.height, 0, GL_RGBA, GL_FLOAT, None)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, self.main_color_texture, 0)
+        
+        # Depth attachment
+        glBindRenderbuffer(GL_RENDERBUFFER, main_depth_buffer)
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, self.width, self.height)
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, main_depth_buffer)
+        
+        # Verify main FBO is complete
+        if glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE:
+            raise RuntimeError("Main framebuffer is not complete!")
+
+        # Bright pass FBO
+        self.bright_fbo = glGenFramebuffers(1)
+        self.bright_color_texture = glGenTextures(1)  # Changed name for clarity
+        
+        glBindFramebuffer(GL_FRAMEBUFFER, self.bright_fbo)
+        glBindTexture(GL_TEXTURE_2D, self.bright_color_texture)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, self.width, self.height, 0, GL_RGBA, GL_FLOAT, None)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, self.bright_color_texture, 0)
+        
+        # Verify bright FBO is complete
+        if glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE:
+            raise RuntimeError("Bright framebuffer is not complete!")
+
+        # Blur FBOs
+        self.blur_fbos = []
+        for i in range(2):
+            blur_fbo = glGenFramebuffers(1)
+            blur_texture = glGenTextures(1)
+            
+            glBindFramebuffer(GL_FRAMEBUFFER, blur_fbo)
+            glBindTexture(GL_TEXTURE_2D, blur_texture)
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, self.width, self.height, 0, GL_RGBA, GL_FLOAT, None)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, blur_texture, 0)
+            
+            # Verify blur FBO is complete
+            if glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE:
+                raise RuntimeError(f"Blur framebuffer {i} is not complete!")
+                
+            self.blur_fbos.append((blur_fbo, blur_texture))
+        
+        # Reset to default framebuffer
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+
     def _load_star_texture(self):
         """Load the star texture from the PNG file.""" 
         # Get the path to the star texture
@@ -635,6 +711,11 @@ class RadioWaveRenderer:
         
         # Update OpenGL viewport
         glViewport(0, 0, width, height)
+        
+        # Recreate framebuffers with new size if initialized
+        if self.initialized:
+            if hasattr(self, 'main_fbo'):
+                self._create_framebuffers()  # Recreate all framebuffers with new size
     
     def _transform_point(self, point):
         """Apply view transformation to a point.""" 
@@ -777,10 +858,34 @@ class RadioWaveRenderer:
             glBufferData(GL_ARRAY_BUFFER, earth_data.nbytes, earth_data, GL_DYNAMIC_DRAW)
 
     def draw(self):
-        """Draw stars in the galaxy."""
+        """Draw stars with post-processing effects."""
         if not self.initialized:
             self.initialize()
-            
+        
+        # Clear with pure black background
+        glClearColor(0.0, 0.0, 0.0, 1.0)
+        
+        # First pass: Render scene to main FBO
+        glBindFramebuffer(GL_FRAMEBUFFER, self.main_fbo)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        self._draw_scene()
+        
+        # Second pass: Extract bright areas with lower threshold for better bloom
+        glBindFramebuffer(GL_FRAMEBUFFER, self.bright_fbo)
+        glClear(GL_COLOR_BUFFER_BIT)
+        self._apply_bright_pass()
+        
+        # Third pass: Apply gaussian blur with larger kernel
+        self._apply_blur()
+        
+        # Final pass: Composite everything with enhanced effects
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+        glClear(GL_COLOR_BUFFER_BIT)
+        self._apply_post_processing()
+
+    def _draw_scene(self):
+        """Draw the main scene (stars and waves)."""
+        # Move existing draw logic here
         # Skip rendering if window is minimized or has invalid dimensions
         if self.width <= 0 or self.height <= 0:
             return
@@ -849,7 +954,237 @@ class RadioWaveRenderer:
         
         # Draw waves and debug info
         self.draw_wave_circles()
+
+    def _apply_bright_pass(self):
+        """Extract bright areas for bloom with improved parameters."""
+        self.bright_shader.use()
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.main_color_texture)
+        self.bright_shader.set_uniform_1i("scene", 0)
+        self.bright_shader.set_uniform_1f("threshold", 0.7)  # Lower threshold for more bloom
+        
+        glDisable(GL_DEPTH_TEST)
+        glBindVertexArray(self.screen_quad_vao)
+        glDrawArrays(GL_TRIANGLES, 0, 6)
+
+    def _apply_blur(self):
+        """Apply gaussian blur to the bright areas."""
+        self.blur_shader.use()
+        
+        # Horizontal blur
+        glBindFramebuffer(GL_FRAMEBUFFER, self.blur_fbos[0][0])
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.bright_color_texture)  # Use bright color texture
+        self.blur_shader.set_uniform_1i("image", 0)
+        self.blur_shader.set_uniform_2f("direction", 1.0, 0.0)
+        glBindVertexArray(self.screen_quad_vao)
+        glDrawArrays(GL_TRIANGLES, 0, 6)
+        
+        # Vertical blur
+        glBindFramebuffer(GL_FRAMEBUFFER, self.blur_fbos[1][0])
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.blur_fbos[0][1])
+        self.blur_shader.set_uniform_2f("direction", 0.0, 1.0)
+        glDrawArrays(GL_TRIANGLES, 0, 6)
+
+    def _apply_post_processing(self):
+        """Apply final post-processing with enhanced visual effects."""
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+        
+        self.post_shader.use()
+        
+        # Bind textures
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.main_color_texture)
+        glActiveTexture(GL_TEXTURE1)
+        glBindTexture(GL_TEXTURE_2D, self.blur_fbos[1][1])
+        
+        # Enhanced post-processing parameters
+        self.post_shader.set_uniform_1i("scene", 0)
+        self.post_shader.set_uniform_1i("bloom", 1)
+        self.post_shader.set_uniform_1f("exposure", 1.0)  # Increased exposure
+        self.post_shader.set_uniform_1f("gamma", 1.6)  # Proper gamma correction
+        
+        # Update post shader with enhanced color grading
+        self.post_shader.set_uniform_3f("tint", 1.1, 1.05, 1.0)  # Slight yellow tint
+        self.post_shader.set_uniform_1f("saturation", 1.2)  # Enhanced colors
+        self.post_shader.set_uniform_1f("contrast", 1.1)  # Increased contrast
+        
+        glDisable(GL_DEPTH_TEST)
+        glBindVertexArray(self.screen_quad_vao)
+        glDrawArrays(GL_TRIANGLES, 0, 6)
+        glEnable(GL_DEPTH_TEST)
+
+    def _create_post_shaders(self):
+        """Create shaders for post-processing effects."""
+        # Bright pass shader for bloom
+        bright_vs = """
+        #version 330 core
+        layout (location = 0) in vec3 aPos;
+        layout (location = 1) in vec2 aTexCoords;
+        
+        out vec2 TexCoords;
+        
+        void main() {
+            gl_Position = vec4(aPos, 1.0);
+            TexCoords = aTexCoords;
+        }
+        """
+        
+        bright_fs = """
+        #version 330 core
+        in vec2 TexCoords;
+        out vec4 FragColor;
+        
+        uniform sampler2D scene;
+        uniform float threshold;
+        
+        void main() {
+            vec3 color = texture(scene, TexCoords).rgb;
+            float brightness = dot(color, vec3(0.2126, 0.7152, 0.0722));
+            if(brightness > threshold)
+                FragColor = vec4(color, 1.0);
+            else
+                FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        }
+        """
+        
+        # Gaussian blur shader
+        blur_vs = """
+        #version 330 core
+        layout (location = 0) in vec3 aPos;
+        layout (location = 1) in vec2 aTexCoords;
+        
+        out vec2 TexCoords;
+        
+        void main() {
+            gl_Position = vec4(aPos, 1.0);
+            TexCoords = aTexCoords;
+        }
+        """
+        
+        blur_fs = """
+        #version 330 core
+        in vec2 TexCoords;
+        out vec4 FragColor;
+        
+        uniform sampler2D image;
+        uniform vec2 direction;
+        
+        void main() {
+            vec2 tex_offset = 1.0 / textureSize(image, 0);
+            float weights[5] = float[] (0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216);
+            
+            vec3 result = texture(image, TexCoords).rgb * weights[0];
+            for(int i = 1; i < 5; ++i) {
+                result += texture(image, TexCoords + direction * tex_offset * i).rgb * weights[i];
+                result += texture(image, TexCoords - direction * tex_offset * i).rgb * weights[i];
+            }
+            FragColor = vec4(result, 1.0);
+        }
+        """
+        
+        # Final post-processing shader
+        post_vs = """
+        #version 330 core
+        layout (location = 0) in vec3 aPos;
+        layout (location = 1) in vec2 aTexCoords;
+        
+        out vec2 TexCoords;
+        
+        void main() {
+            gl_Position = vec4(aPos, 1.0);
+            TexCoords = aTexCoords;
+        }
+        """
+        
+        post_fs = """
+    #version 330 core
+    in vec2 TexCoords;
+    out vec4 FragColor;
     
+    uniform sampler2D scene;
+    uniform sampler2D bloom;
+    uniform float exposure;
+    uniform float gamma;
+    uniform vec3 tint;
+    uniform float saturation;
+    uniform float contrast;
+    
+    vec3 adjustSaturation(vec3 color, float adjustment)
+    {
+        const vec3 luminance = vec3(0.2126, 0.7152, 0.0722);
+        float luminanceValue = dot(color, luminance);
+        return mix(vec3(luminanceValue), color, adjustment);
+    }
+    
+    void main()
+    {
+        // Sample textures
+        vec3 hdrColor = texture(scene, TexCoords).rgb;
+        vec3 bloomColor = texture(bloom, TexCoords).rgb;
+        
+        // Add bloom with higher intensity
+        vec3 result = hdrColor + bloomColor * 1.5;       
+        
+        // Tone mapping with enhanced contrast
+        result = vec3(1.0) - exp(-result * exposure);
+        
+        // Color grading
+        result = adjustSaturation(result, saturation);
+        result = pow(result * tint, vec3(1.0 / gamma));
+        
+        // Contrast adjustment
+        result = mix(vec3(0.5), result, contrast);
+        
+        FragColor = vec4(result, 1.0);
+    }
+"""
+        
+        # Create shader programs
+        self.bright_shader = ShaderProgram()
+        self.bright_shader.add_shader(GL_VERTEX_SHADER, bright_vs)
+        self.bright_shader.add_shader(GL_FRAGMENT_SHADER, bright_fs)
+        self.bright_shader.link()
+        
+        self.blur_shader = ShaderProgram()
+        self.blur_shader.add_shader(GL_VERTEX_SHADER, blur_vs)
+        self.blur_shader.add_shader(GL_FRAGMENT_SHADER, blur_fs)
+        self.blur_shader.link()
+        
+        self.post_shader = ShaderProgram()
+        self.post_shader.add_shader(GL_VERTEX_SHADER, post_vs)
+        self.post_shader.add_shader(GL_FRAGMENT_SHADER, post_fs)
+        self.post_shader.link()
+
+    def _create_screen_quad(self):
+        """Create a screen-space quad for post-processing."""
+        vertices = np.array([
+            # positions        # texture coords
+            -1.0,  1.0, 0.0,  0.0, 1.0,
+            -1.0, -1.0, 0.0,  0.0, 0.0,
+             1.0, -1.0, 0.0,  1.0, 0.0,
+             
+            -1.0,  1.0, 0.0,  0.0, 1.0,
+             1.0, -1.0, 0.0,  1.0, 0.0,
+             1.0,  1.0, 0.0,  1.0, 1.0
+        ], dtype=np.float32)
+        
+        self.screen_quad_vao = glGenVertexArrays(1)
+        vbo = glGenBuffers(1)
+        
+        glBindVertexArray(self.screen_quad_vao)
+        glBindBuffer(GL_ARRAY_BUFFER, vbo)
+        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
+        
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * 4, ctypes.c_void_p(0))
+        glEnableVertexAttribArray(1)
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * 4, ctypes.c_void_p(3 * 4))
+        
+        glBindVertexArray(0)
+        glDeleteBuffers(1, [vbo])
+
     def cleanup(self):
         """Clean up OpenGL resources.""" 
         if self.star_texture_id is not None:
@@ -884,3 +1219,18 @@ class RadioWaveRenderer:
         
         if self.earth_star_vbo is not None:
             glDeleteBuffers(1, [self.earth_star_vbo])
+
+        # Clean up post-processing resources
+        if hasattr(self, 'main_fbo_texture'):
+            glDeleteTextures(1, [self.main_fbo_texture])
+        if hasattr(self, 'bright_fbo_texture'):
+            glDeleteTextures(1, [self.bright_fbo_texture])
+        if hasattr(self, 'main_fbo'):
+            glDeleteFramebuffers(1, [self.main_fbo])
+        if hasattr(self, 'bright_fbo'):
+            glDeleteFramebuffers(1, [self.bright_fbo])
+        if hasattr(self, 'blur_fbos'):
+            for fbo, tex in self.blur_fbos:
+                glDeleteFramebuffers(1, [fbo])
+                glDeleteTextures(1, [tex])
+
