@@ -210,7 +210,9 @@ class RadioWaveSimApp:
         """Handle window resize."""
         self.width = width
         self.height = height
-        self.renderer.resize(width, height)
+        # Only update renderer if window has valid dimensions
+        if width > 0 and height > 0:
+            self.renderer.resize(width, height)
     
     def key_callback(self, window, key, scancode, action, mods):
         """Handle keyboard input."""

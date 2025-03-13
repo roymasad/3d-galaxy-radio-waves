@@ -706,16 +706,19 @@ class RadioWaveRenderer:
     
     def resize(self, width, height):
         """Handle window resize.""" 
+        # Store dimensions even if zero
         self.width = width
         self.height = height
         
-        # Update OpenGL viewport
-        glViewport(0, 0, width, height)
-        
-        # Recreate framebuffers with new size if initialized
-        if self.initialized:
-            if hasattr(self, 'main_fbo'):
-                self._create_framebuffers()  # Recreate all framebuffers with new size
+        # Only update if dimensions are valid
+        if width > 0 and height > 0:
+            # Update OpenGL viewport
+            glViewport(0, 0, width, height)
+            
+            # Recreate framebuffers with new size if initialized
+            if self.initialized:
+                if hasattr(self, 'main_fbo'):
+                    self._create_framebuffers()  # Recreate all framebuffers with new size
     
     def _transform_point(self, point):
         """Apply view transformation to a point.""" 
@@ -861,7 +864,11 @@ class RadioWaveRenderer:
         """Draw stars with post-processing effects."""
         if not self.initialized:
             self.initialize()
-        
+            
+        # Skip rendering if window is minimized
+        if self.width <= 0 or self.height <= 0:
+            return
+            
         # Clear with pure black background
         glClearColor(0.0, 0.0, 0.0, 1.0)
         
