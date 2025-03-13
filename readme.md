@@ -4,6 +4,8 @@ A 3D visualization and simulation of radio wave propagation across a galaxy, mod
 
 ![Galaxy Simulation Screenshot 1](galaxy1.jpg)
 ![Galaxy Simulation Screenshot 2](galaxy2.jpg)
+![Galaxy Simulation Screenshot 3](galaxy3.jpg)
+![Galaxy Simulation Screenshot 4](galaxy4.jpg)
 
 ## Description
 
@@ -15,7 +17,7 @@ This project simulates radio wave emissions from civilizations across a galaxy a
 - Sky coverage percentage
 
 The simulation renders stars, Earth, and expanding radio waves using OpenGL, with an interactive UI built with ImGui.
-Rendering performance is optimized to use instancing and buffers with shaders.
+Rendering performance is optimized to use instancing and buffers with shaders. Post processing shaders applied (blur, bloom, color correction).
 On a macbook m1 it should be able to simulate on a 100k stars galaxy with comfortable fps.
 
 ## Features
