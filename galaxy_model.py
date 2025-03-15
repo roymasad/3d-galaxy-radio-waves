@@ -54,6 +54,10 @@ class GalaxyModel:
         self.arm_fraction = 0.35  # Fraction of stars in spiral arms vs. disk
         self.bulge_fraction = 0.2  # Fraction of stars in the central bulge
         
+        # Edge softening parameters
+        self.edge_softness = 0.15  # How much beyond nominal radius stars can appear (as fraction of radius)
+        self.edge_density_falloff = 2.5  # Higher values create sharper density falloff at edges
+        
         # Generate stars
         self.stars = []
         self.earth = None
@@ -110,6 +114,55 @@ class GalaxyModel:
         # Check if the point is within an arm
         return min_angle < (width_factor * np.pi)
     
+    def _calculate_edge_probability(self, r):
+        """
+        Calculate the probability of accepting a star based on its distance from center.
+        Creates a soft edge instead of a hard cutoff at galaxy radius.
+        
+        Args:
+            r: Radius from center
+            
+        Returns:
+            Probability (0-1) of accepting this star
+        """
+        # Stars inside the nominal radius are always accepted
+        if r <= self.radius:
+            return 1.0
+        
+        # Stars beyond the extended radius are never accepted
+        extended_radius = self.radius * (1.0 + self.edge_softness)
+        if r >= extended_radius:
+            return 0.0
+        
+        # For stars in the soft edge region, probability decreases with distance
+        edge_fraction = (r - self.radius) / (extended_radius - self.radius)
+        return 1.0 - pow(edge_fraction, self.edge_density_falloff)
+    
+    def _calculate_z_height(self, r):
+        """
+        Calculate the maximum height (z-coordinate) for a star at radius r.
+        Creates a tapered disk that's thinner at the edges.
+        
+        Args:
+            r: Radius from center
+            
+        Returns:
+            Maximum height value
+        """
+        # Normalize radius
+        r_norm = min(1.0, r / self.radius)
+        
+        # Use a quadratic falloff for more rapid thinning near the edges
+        # This creates a smoother tapering effect
+        height_factor = 1.0 - (r_norm ** 1.8)
+        
+        # Further reduce thickness at the very edge
+        if r_norm > 0.8:
+            edge_factor = (1.0 - r_norm) / 0.2  # Goes from 1 to 0 as r_norm goes from 0.8 to 1.0
+            height_factor *= edge_factor
+        
+        return self.height/2 * height_factor
+    
     def generate_random_position(self):
         """
         Generate a position for a star using spiral galaxy structure.
@@ -140,31 +193,45 @@ class GalaxyModel:
         elif component < (self.bulge_fraction + self.arm_fraction):
             # SPIRAL ARM COMPONENT: Stars along the spiral arms
             
-            # Loop until we get a point in an arm
+            # Loop until we get a point in an arm with accepted edge probability
             while True:
                 # Generate radius with exponential density distribution
                 u = random.random()
                 r = -self.density_scale * np.log(1 - u * (1 - np.exp(-self.radius / self.density_scale)))
                 
+                # Apply soft edge - possibly extend beyond nominal radius
+                extended_radius = self.radius * (1.0 + self.edge_softness)
+                if r > extended_radius:
+                    continue
+                
+                # Apply edge probability
+                edge_prob = self._calculate_edge_probability(r)
+                if random.random() > edge_prob:
+                    continue
+                
                 # Random angle
                 theta = random.uniform(0, 2 * np.pi)
                 
                 # Check if this point is in a spiral arm
-                if r <= self.radius and self._is_in_spiral_arm(r, theta):
+                # Allow stars to be outside arms more often near the edge
+                r_norm = min(1.0, r / self.radius)
+                arm_check_prob = 1.0 - 0.5 * max(0, r_norm - 0.9) / 0.1  # Reduce arm constraint at edges
+                
+                if self._is_in_spiral_arm(r, theta) or (r_norm > 0.9 and random.random() > arm_check_prob):
                     break
             
             # Convert to Cartesian coordinates
             x = r * np.cos(theta)
             y = r * np.sin(theta)
             
-            # Z coordinate is compressed to create the ellipsoid/saucer shape
-            max_height = self.height/2 * (1 - 0.5 * r / self.radius)
+            # Z coordinate with tapering at edges
+            max_height = self._calculate_z_height(r)
             z = random.uniform(-max_height, max_height)
             
         else:
             # DISK COMPONENT: Background stars in the galactic disk
             
-            # Use rejection sampling to create exponential density distribution
+            # Use rejection sampling with soft edge
             while True:
                 # Generate angle uniformly
                 theta = random.uniform(0, 2 * np.pi)
@@ -173,17 +240,22 @@ class GalaxyModel:
                 u = random.random()
                 r = -self.density_scale * np.log(1 - u * (1 - np.exp(-self.radius / self.density_scale)))
                 
-                # Ensure we're within galaxy radius
-                if r <= self.radius:
+                # Apply soft edge
+                extended_radius = self.radius * (1.0 + self.edge_softness)
+                if r > extended_radius:
+                    continue
+                    
+                # Apply edge probability
+                edge_prob = self._calculate_edge_probability(r)
+                if random.random() <= edge_prob:
                     break
             
             # Convert to Cartesian coordinates
             x = r * np.cos(theta)
             y = r * np.sin(theta)
             
-            # Z coordinate is compressed to create the ellipsoid/saucer shape
-            # Scale z compression based on distance from center for a more realistic bulge
-            max_height = self.height/2 * (1 - 0.5 * r / self.radius)
+            # Z coordinate with tapering at edges
+            max_height = self._calculate_z_height(r)
             z = random.uniform(-max_height, max_height)
         
         return np.array([x, y, z])
