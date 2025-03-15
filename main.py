@@ -57,8 +57,14 @@ class RadioWaveSimApp:
         # View parameters
         self.rotation_x = 350
         self.rotation_y = 340
+        self.rotation_z = 0  # Add Z-axis rotation parameter
         self.scale = 0.07
         self.translation_z = -1200
+        
+        # Auto-rotation parameters
+        self.auto_rotation_enabled = True
+        self.auto_rotation_speed = 360.0 / 180.0  # 1 rotation each 3 minutes
+        self.last_auto_rotation_time = time.time()
         
         # Timing
         self.last_update_time = time.time()
@@ -249,7 +255,7 @@ class RadioWaveSimApp:
                 
                 # Update renderer view parameters
                 self.renderer.update_view_params(
-                    self.rotation_x, self.rotation_y, self.scale, self.translation_z
+                    self.rotation_x, self.rotation_y, self.scale, self.translation_z, self.rotation_z
                 )
                 
                 self.mouse_dragging = True
@@ -306,7 +312,7 @@ class RadioWaveSimApp:
             
             # Update renderer
             self.renderer.update_view_params(
-                self.rotation_x, self.rotation_y, self.scale, self.translation_z
+                self.rotation_x, self.rotation_y, self.scale, self.translation_z, self.rotation_z
             )
     
     def update_fps(self):
@@ -463,7 +469,7 @@ class RadioWaveSimApp:
         imgui.text("  • Scroll wheel to zoom")
         
         # View parameters display
-        imgui.text(f"Rotation: X={self.rotation_x:.1f}, Y={self.rotation_y:.1f}")
+        imgui.text(f"Rotation: X={self.rotation_x:.1f}, Y={self.rotation_y:.1f}, Z={self.rotation_z:.1f}")
         imgui.text(f"Zoom: {self.scale:.3f}")
         
         # Get current window position and size for UI interaction
@@ -520,6 +526,19 @@ class RadioWaveSimApp:
         elapsed = current_time - self.last_update_time
         self.last_update_time = current_time
         
+        # Apply auto-rotation if enabled and not being manually rotated
+        if self.auto_rotation_enabled and not self.mouse_pressed:
+            # Calculate the amount of rotation based on time elapsed
+            auto_rotation_amount = elapsed * self.auto_rotation_speed
+            
+            # Apply rotation to Z-axis
+            self.rotation_z = (self.rotation_z - auto_rotation_amount) % 360
+            
+            # Update renderer view parameters with the new rotation
+            self.renderer.update_view_params(
+                self.rotation_x, self.rotation_y, self.scale, self.translation_z, self.rotation_z
+            )
+        
         # Update the simulation (using years as the time unit)
         if self.is_running:
             self.simulation.update(elapsed)
@@ -572,7 +591,7 @@ class RadioWaveSimApp:
                         
                         # Update renderer view
                         self.renderer.update_view_params(
-                            self.rotation_x, self.rotation_y, self.scale, self.translation_z
+                            self.rotation_x, self.rotation_y, self.scale, self.translation_z, self.rotation_z
                         )
                         
                     # Update position for next frame

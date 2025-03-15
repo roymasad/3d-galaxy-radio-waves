@@ -97,6 +97,7 @@ class RadioWaveRenderer:
         self.waves_data = []
         self.rotation_x = 350
         self.rotation_y = 340
+        self.rotation_z = 0  # Add Z rotation parameter
         self.scale = 0.07
         self.translation_z = -1200
         
@@ -682,10 +683,12 @@ class RadioWaveRenderer:
         
         # Unbind VAO
         glBindVertexArray(0)
-    def update_view_params(self, rotation_x, rotation_y, scale, translation_z):
+    def update_view_params(self, rotation_x, rotation_y, scale, translation_z, rotation_z=None):
         """Update view parameters.""" 
         self.rotation_x = rotation_x % 360
         self.rotation_y = rotation_y % 360
+        if rotation_z is not None:
+            self.rotation_z = rotation_z % 360
         self.scale = max(0.001, min(100.0, scale))
         #self.scale = scale
         self.translation_z = translation_z
@@ -755,6 +758,7 @@ class RadioWaveRenderer:
         view_matrix = glm.translate(view_matrix, glm.vec3(0, 0, self.translation_z))
         view_matrix = glm.rotate(view_matrix, glm.radians(self.rotation_x), glm.vec3(1, 0, 0))
         view_matrix = glm.rotate(view_matrix, glm.radians(self.rotation_y), glm.vec3(0, 1, 0))
+        view_matrix = glm.rotate(view_matrix, glm.radians(self.rotation_z), glm.vec3(0, 0, 1))  # Z-axis rotation
         view_matrix = glm.scale(view_matrix, glm.vec3(self.scale, self.scale, self.scale))
         
         projection_matrix = glm.perspective(glm.radians(45.0), self.width / self.height, 0.1, 5000.0)
@@ -913,11 +917,12 @@ class RadioWaveRenderer:
         model_matrix = glm.mat4(1.0)  # Identity
         projection_matrix = glm.perspective(glm.radians(45.0), self.width / self.height, 0.1, 5000.0)
         
-        # Create orbiting view matrix
+        # Create orbiting view matrix with Z-axis rotation
         view_matrix = glm.mat4(1.0)
         view_matrix = glm.translate(view_matrix, glm.vec3(0, 0, self.translation_z))
         view_matrix = glm.rotate(view_matrix, glm.radians(self.rotation_x), glm.vec3(1, 0, 0))
         view_matrix = glm.rotate(view_matrix, glm.radians(self.rotation_y), glm.vec3(0, 1, 0))
+        view_matrix = glm.rotate(view_matrix, glm.radians(self.rotation_z), glm.vec3(0, 0, 1))  # Z-axis rotation
         view_matrix = glm.scale(view_matrix, glm.vec3(self.scale, self.scale, self.scale))
         
         # Set up shader and uniforms
