@@ -8,6 +8,7 @@ import math
 import os
 from PIL import Image
 import glm
+import random
 
 class ShaderProgram:
     """
@@ -119,6 +120,10 @@ class RadioWaveRenderer:
         self.z_depth_factor = 2.0  # Power curve for depth effect
         self.z_depth_divisor = 8000  # Divisor for depth calculation
         
+        # Add timer for star flickering effect
+        self.flicker_time = 0.0
+        self.flicker_intensity = 0.4  # Intensity of the flickering effect (0.0 - 1.0)
+        
         # Initialize OpenGL state
         self.initialized = False
         self.star_texture_id = None
@@ -180,6 +185,7 @@ class RadioWaveRenderer:
         out vec2 TexCoord;
         out vec4 Color;
         out float IsEarthStar;
+        out vec3 StarPosition;  // Pass star position to fragment shader
         
         uniform mat4 model;
         uniform mat4 view;
@@ -191,11 +197,14 @@ class RadioWaveRenderer:
         uniform float earthOpacity;
         uniform float sizeMinScale;
         uniform float sizeMaxScale;
+        uniform float flickerTime;  // Time uniform for flickering
+        uniform float flickerIntensity;  // Intensity of the flickering
         
         void main()
         {
             TexCoord = aTexCoord;
             IsEarthStar = aInstanceSpecial;
+            StarPosition = aInstancePos;  // Pass position to fragment shader
             
             // Transform instance position to view space for z-depth and billboarding
             vec4 viewPos = view * model * vec4(aInstancePos, 1.0);
@@ -233,16 +242,26 @@ class RadioWaveRenderer:
         }
         """
         
-        # Fragment shader with proper alpha handling
+        # Fragment shader with proper alpha handling and flickering
         fragment_shader = """
         #version 330 core
         in vec2 TexCoord;
         in vec4 Color;
         in float IsEarthStar;
+        in vec3 StarPosition;  // Star position from vertex shader
         
         out vec4 FragColor;
         
         uniform sampler2D starTexture;
+        uniform float flickerTime;  // Time uniform for flickering
+        uniform float flickerIntensity;  // Intensity of the flickering
+        
+        // Hash function for pseudo-random values
+        float hash(vec3 p) {
+            p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+            p += dot(p, p.yxz + 33.33);
+            return fract((p.x + p.y) * p.z);
+        }
         
         void main()
         {
@@ -250,7 +269,7 @@ class RadioWaveRenderer:
             vec4 finalColor;
             
             if (IsEarthStar > 0.5) {
-                // Special blending for Earth
+                // Special blending for Earth - no flickering for Earth
                 vec3 earthColor = Color.rgb * 2.0;  // Boost the base color
                 
                 // Add a bright blue glow
@@ -265,8 +284,28 @@ class RadioWaveRenderer:
                 coreBrightness = pow(max(0.0, coreBrightness), 2.0);
                 finalColor.rgb += glowColor * coreBrightness;
             } else {
-                // Normal star blending
-                finalColor = texColor * Color;
+                // Normal star blending with flickering
+                
+                // Generate unique flicker pattern for each star based on its position
+                float uniqueSeed = hash(StarPosition);
+                
+                // Create time-based flicker value using sin with phase offset per star
+                float flicker = sin(flickerTime * (0.5 + uniqueSeed) + uniqueSeed * 6.28) * 0.5 + 0.5;
+                
+                // Add a second sine wave with different frequency for more natural effect
+                flicker *= 0.8 + 0.2 * sin(flickerTime * (0.3 + uniqueSeed * 0.7) + uniqueSeed * 3.14);
+                
+                // Apply power curve for more twinkling effect
+                flicker = pow(flicker, 1.0 + uniqueSeed);
+                
+                // Scale by intensity and center around 1.0
+                flicker = 1.0 + flickerIntensity * (flicker - 0.5) * 2.0;
+                
+                // Apply the flickering effect to color intensity
+                vec3 flickerColor = Color.rgb * flicker;
+                
+                // Ensure we don't exceed maximum brightness
+                finalColor = texColor * vec4(min(vec3(1.0), flickerColor), Color.a);
             }
             
             // Discard nearly transparent pixels
@@ -826,10 +865,14 @@ class RadioWaveRenderer:
                         1.0                          # special flag (1)
                     ], dtype=np.float32)
                 else:
+                    # Add random size variation for normal stars
+                    random_size_factor = random.uniform(0.2, 1.5)  
+                    varied_star_size = self.normal_star_size * random_size_factor
+                    
                     static_stars.extend([
                         *position,                    # position (3)
                         *color,                       # color (4)
-                        self.normal_star_size,       # size (1)
+                        varied_star_size,            # size with random variation (1)
                         0.0                          # special flag (1)
                     ])
 
@@ -868,6 +911,9 @@ class RadioWaveRenderer:
         """Draw stars with post-processing effects."""
         if not self.initialized:
             self.initialize()
+            
+        # Update flicker time
+        self.flicker_time += 0.016  # Approximately 60 FPS
             
         # Skip rendering if window is minimized
         if self.width <= 0 or self.height <= 0:
@@ -946,6 +992,10 @@ class RadioWaveRenderer:
         self.star_shader.set_uniform_1f("earthOpacity", self.earth_opacity)
         self.star_shader.set_uniform_1f("sizeMinScale", self.size_min_scale)
         self.star_shader.set_uniform_1f("sizeMaxScale", self.size_max_scale)
+        
+        # Set flickering uniforms
+        self.star_shader.set_uniform_1f("flickerTime", self.flicker_time)
+        self.star_shader.set_uniform_1f("flickerIntensity", self.flicker_intensity)
         
         # Draw static stars first
         if self.static_instance_count > 0:

@@ -61,6 +61,10 @@ class RadioWaveSimApp:
         self.scale = 0.07
         self.translation_z = -1200
         
+        # Star flickering parameters
+        self.flicker_enabled = True
+        self.flicker_intensity = 0.4
+        
         # Auto-rotation parameters
         self.auto_rotation_enabled = True
         self.auto_rotation_speed = 360.0 / 180.0  # 1 rotation each 3 minutes
@@ -423,6 +427,28 @@ class RadioWaveSimApp:
         imgui.spacing()
         imgui.separator()
         
+        # View Control Parameters
+        imgui.text("View Controls")
+        imgui.separator()
+        
+        # Auto-rotation toggle
+        changed, self.auto_rotation_enabled = imgui.checkbox(
+            "Auto-Rotation", self.auto_rotation_enabled
+        )
+        
+        # Star flickering controls
+        changed, self.flicker_enabled = imgui.checkbox(
+            "Star Flickering", self.flicker_enabled
+        )
+        
+        imgui.set_next_item_width(150)
+        changed, self.flicker_intensity = imgui.slider_float(
+            "Flicker Intensity", self.flicker_intensity, 0.0, 1.0
+        )
+        
+        imgui.spacing()
+        imgui.separator()
+        
         # Control Buttons
         if self.is_running:
             if imgui.button("Pause", width=200):
@@ -538,6 +564,10 @@ class RadioWaveSimApp:
             self.renderer.update_view_params(
                 self.rotation_x, self.rotation_y, self.scale, self.translation_z, self.rotation_z
             )
+        
+        # Update star flickering parameters in the renderer
+        if self.renderer:
+            self.renderer.flicker_intensity = self.flicker_intensity if self.flicker_enabled else 0.0
         
         # Update the simulation (using years as the time unit)
         if self.is_running:
